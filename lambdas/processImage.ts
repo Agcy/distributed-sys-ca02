@@ -23,6 +23,12 @@ export const handler: SQSHandler = async (event) => {
                 const srcBucket = s3e.bucket.name;
                 // Object key may have spaces or unicode non-ASCII characters.
                 const srcKey = decodeURIComponent(s3e.object.key.replace(/\+/g, " "));
+                // Check the img extension
+                if (!srcKey.toLowerCase().endsWith('.jpeg') && !srcKey.toLowerCase().endsWith('.png')) {
+                    console.error(`Unsupported file type for key: ${srcKey}`);
+                    throw new Error(`Unsupported file type: Files must be JPEG or PNG.`);
+                }
+
                 let origimage = null;
                 try {
                     // Download the image from the S3 source bucket.
@@ -33,6 +39,7 @@ export const handler: SQSHandler = async (event) => {
                     origimage = await s3.send(new GetObjectCommand(params));
                     // Process the image ......
                 } catch (error) {
+                    console.error(`Error processing image: ${error}`);
                     console.log(error);
                 }
             }
