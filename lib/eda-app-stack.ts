@@ -8,6 +8,7 @@ import * as sqs from "aws-cdk-lib/aws-sqs";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as subs from "aws-cdk-lib/aws-sns-subscriptions";
 import * as iam from "aws-cdk-lib/aws-iam";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 
 import { Construct } from "constructs";
 // import * as sqs from 'aws-cdk-lib/aws-sqs';
@@ -22,6 +23,13 @@ export class EDAAppStack extends cdk.Stack {
       publicReadAccess: false,
     });
 
+    // create table
+    const imagesTable = new dynamodb.Table(this, "imagesTable", {
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      partitionKey: { name: "imageName", type: dynamodb.AttributeType.STRING },
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      tableName: "Images",
+    })
     // Output
 
     new cdk.CfnOutput(this, "bucketName", {
@@ -29,7 +37,7 @@ export class EDAAppStack extends cdk.Stack {
     });
 
     // Create the DLQ
-    const imageProcessingDLQ = new sqs.Queue(this, "ImageProcessingDLQ", {
+    const imageProcessingDLQ = new sqs.Queue(this, "img-processing-DLQ", {
       receiveMessageWaitTime: cdk.Duration.seconds(10),
     });
 
@@ -47,6 +55,14 @@ export class EDAAppStack extends cdk.Stack {
       receiveMessageWaitTime: cdk.Duration.seconds(10),
     });
 
+    const rejectionMailerQ = new sqs.Queue(this, "rejection-mailer-queue", {
+      receiveMessageWaitTime: cdk.Duration.seconds(10),
+      deadLetterQueue: {
+        queue: imageProcessingDLQ,
+        maxReceiveCount: 5
+      }
+    });
+
     const newImageTopic = new sns.Topic(this, "NewImageTopic", {
       displayName: "New Image topic",
     });
@@ -61,6 +77,10 @@ export class EDAAppStack extends cdk.Stack {
           entry: `${__dirname}/../lambdas/processImage.ts`,
           timeout: cdk.Duration.seconds(15),
           memorySize: 128,
+          environment: {
+            TABLE_NAME: imagesTable.tableName,
+            REGION: 'eu-west-1',
+          }
         }
     );
 
@@ -69,6 +89,13 @@ export class EDAAppStack extends cdk.Stack {
       memorySize: 1024,
       timeout: cdk.Duration.seconds(3),
       entry: `${__dirname}/../lambdas/mailer.ts`,
+    });
+
+    const rejectionMailerFn = new lambdanode.NodejsFunction(this, "rejection-mailer-function", {
+      runtime: lambda.Runtime.NODEJS_16_X,
+      entry: `${__dirname}/../lambdas/rejectionMailer.ts`,
+      timeout: cdk.Duration.seconds(3),
+      memorySize: 1024,
     });
 
     // S3 --> SQS
@@ -94,8 +121,14 @@ export class EDAAppStack extends cdk.Stack {
       maxBatchingWindow: cdk.Duration.seconds(10),
     });
 
+    const rejectedImageMailEventSource = new events.SqsEventSource(imageProcessingDLQ, {
+      batchSize: 5,
+      maxBatchingWindow: cdk.Duration.seconds(10),
+    })
+
     processImageFn.addEventSource(newImageEventSource);
     mailerFn.addEventSource(newImageMailEventSource);
+    rejectionMailerFn.addEventSource(rejectedImageMailEventSource);
 
     // Permissions
 
@@ -112,6 +145,20 @@ export class EDAAppStack extends cdk.Stack {
           resources: ["*"],
         })
     );
+
+    rejectionMailerFn.addToRolePolicy(
+        new iam.PolicyStatement({
+          effect: iam.Effect.ALLOW,
+          actions: [
+            "ses:SendEmail",
+            "ses:SendRawEmail",
+            "ses:SendTemplatedEmail",
+          ],
+          resources: ["*"],
+        })
+    );
+
+    imagesTable.grantReadWriteData(processImageFn)
 
     // Output
 
