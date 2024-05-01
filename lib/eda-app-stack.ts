@@ -28,10 +28,19 @@ export class EDAAppStack extends cdk.Stack {
       value: imagesBucket.bucketName,
     });
 
+    // Create the DLQ
+    const imageProcessingDLQ = new sqs.Queue(this, "ImageProcessingDLQ", {
+      receiveMessageWaitTime: cdk.Duration.seconds(10),
+    });
+
     // Integration infrastructure
 
     const imageProcessQueue = new sqs.Queue(this, "img-created-queue", {
       receiveMessageWaitTime: cdk.Duration.seconds(10),
+      deadLetterQueue: {
+        queue: imageProcessingDLQ,
+        maxReceiveCount: 5
+      }
     });
 
     const mailerQ = new sqs.Queue(this, "mailer-queue", {
