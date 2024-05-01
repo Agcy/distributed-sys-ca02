@@ -7,8 +7,10 @@ import {
     S3Client,
     PutObjectCommand,
 } from "@aws-sdk/client-s3";
+import { DynamoDBClient, PutItemCommand } from "@aws-sdk/client-dynamodb";
 
 const s3 = new S3Client();
+const ddb = new DynamoDBClient();
 
 export const handler: SQSHandler = async (event) => {
     console.log("Event ", JSON.stringify(event));
@@ -38,8 +40,18 @@ export const handler: SQSHandler = async (event) => {
                     };
                     origimage = await s3.send(new GetObjectCommand(params));
                     // Process the image ......
+                    // Write item to DynamoDB
+                    const ddbParams = {
+                        TableName: "ImagesTable",  // Replace with your table name
+                        Item: {
+                            'ImageName': { S: srcKey },  // Primary key
+                            'Bucket': { S: srcBucket },
+                            'CreatedAt': { S: new Date().toISOString() }
+                        }
+                    };
+                    await ddb.send(new PutItemCommand(ddbParams));
                 } catch (error) {
-                    console.error(`Error processing image: ${error}`);
+                    console.error(`Error processing image or writing to DynamoDB: ${error}`);
                     console.log(error);
                 }
             }
