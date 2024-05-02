@@ -63,9 +63,18 @@ export class EDAAppStack extends cdk.Stack {
       }
     });
 
-    const newImageTopic = new sns.Topic(this, "NewImageTopic", {
+    const newImageTopic = new sns.Topic(this, "new-image-topic", {
       displayName: "New Image topic",
     });
+
+    // delete and update SNS topics
+    const deleteImageTopic = new sns.Topic(this, "delete-image-topic", {
+      displayName: "Delete Image Topic"
+    });
+    const updateDescriptionTopic = new sns.Topic(this, "update-description-topic", {
+      displayName: "Update Description Topic"
+    });
+
 
     // Lambda functions
 
@@ -164,6 +173,16 @@ export class EDAAppStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, "edastack-images9bf4dcd5-85uahqmsnn1v", {
       value: imagesBucket.bucketName,
+    });
+
+    new cdk.CfnOutput(this, "deleteImageTopicArn", {
+      value: deleteImageTopic.topicArn,
+      exportName: "deleteImageTopicArn"
+    });
+
+    new cdk.CfnOutput(this, "updateDescriptionTopicArn", {
+      value: updateDescriptionTopic.topicArn,
+      exportName: "updateDescriptionTopicArn"
     });
   }
 }
