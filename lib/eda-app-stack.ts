@@ -18,14 +18,14 @@ export class EDAAppStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
 
-        const imagesBucket = new s3.Bucket(this, "images", {
+        const imagesBucket = new s3.Bucket(this, "ImagesBucket", {
             removalPolicy: cdk.RemovalPolicy.DESTROY,
             autoDeleteObjects: true,
             publicReadAccess: false,
         });
 
         // create table
-        const imagesTable = new dynamodb.Table(this, "imagesTable", {
+        const imagesTable = new dynamodb.Table(this, "ImagesTable", {
             billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
             partitionKey: {name: "imageName", type: dynamodb.AttributeType.STRING},
             removalPolicy: cdk.RemovalPolicy.DESTROY,
@@ -64,14 +64,11 @@ export class EDAAppStack extends cdk.Stack {
             }
         });
 
+        // Topic
         const newImageTopic = new sns.Topic(this, "new-image-topic", {
             displayName: "New Image topic",
         });
 
-        // delete and update SNS topics
-        const deleteImageTopic = new sns.Topic(this, "delete-image-topic", {
-            displayName: "Delete Image Topic"
-        });
         const updateDescriptionTopic = new sns.Topic(this, "update-description-topic", {
             displayName: "Update Description Topic"
         });
@@ -108,6 +105,20 @@ export class EDAAppStack extends cdk.Stack {
                 }
             }
         );
+
+        const processUpdateFn = new lambdanode.NodejsFunction(
+            this,
+            "UpdateTableFunction",
+            {
+            runtime: lambda.Runtime.NODEJS_16_X,
+            entry: `${__dirname}/../lambdas/processUpdate.ts`,
+            handler: 'handler',
+            timeout: cdk.Duration.seconds(15),
+            environment: {
+                TABLE_NAME: imagesTable.tableName,
+                REGION: 'eu-west-1'
+            }
+        });
 
         const mailerFn = new lambdanode.NodejsFunction(this, "mailer-function", {
             runtime: lambda.Runtime.NODEJS_16_X,
@@ -185,16 +196,12 @@ export class EDAAppStack extends cdk.Stack {
 
         imagesTable.grantReadWriteData(processImageFn)
         imagesTable.grantReadWriteData(processDeleteFn)
+        imagesTable.grantReadWriteData(processUpdateFn)
 
         // Output
 
         new cdk.CfnOutput(this, "edastack-images9bf4dcd5-85uahqmsnn1v", {
             value: imagesBucket.bucketName,
-        });
-
-        new cdk.CfnOutput(this, "deleteImageTopicArn", {
-            value: deleteImageTopic.topicArn,
-            exportName: "deleteImageTopicArn"
         });
 
         new cdk.CfnOutput(this, "updateDescriptionTopicArn", {

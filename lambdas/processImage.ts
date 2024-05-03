@@ -8,7 +8,8 @@ import {
     PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import { DynamoDBClient, PutItemCommand } from "@aws-sdk/client-dynamodb";
-import {DynamoDBDocumentClient} from "@aws-sdk/lib-dynamodb";
+import {DynamoDBDocumentClient, PutCommand} from "@aws-sdk/lib-dynamodb";
+import { SES_REGION, TABLE_NAME } from "../env";
 
 const s3 = new S3Client();
 const ddb = createDDbDocClient();
@@ -29,25 +30,14 @@ export const handler: SQSHandler = async (event) => {
                 // Check the img extension
                 if (!srcKey.toLowerCase().endsWith('.jpeg') && !srcKey.toLowerCase().endsWith('.png')) {
                     console.error(`Unsupported file type for key: ${srcKey}`);
-                    throw new Error(`Unsupported file type: Files must be JPEG or PNG.`);
+                    throw new Error(`Unsupported file type: Files must be JPEG or PNG in ${srcBucket}.`);
                 }
 
-                let origimage = null;
                 try {
-                    // Download the image from the S3 source bucket.
-                    const params: GetObjectCommandInput = {
-                        Bucket: srcBucket,
-                        Key: srcKey,
-                    };
-                    origimage = await s3.send(new GetObjectCommand(params));
-                    // Process the image ......
-                    // Write item to DynamoDB
                     const ddbParams = {
-                        TableName: "ImagesTable",
+                        TableName: TABLE_NAME,
                         Item: {
                             'ImageName': { S: srcKey },
-                            'Bucket': { S: srcBucket },
-                            'CreatedAt': { S: new Date().toISOString() }
                         }
                     };
                     await ddb.send(new PutItemCommand(ddbParams));
@@ -61,7 +51,7 @@ export const handler: SQSHandler = async (event) => {
 };
 
 function createDDbDocClient() {
-    const ddbClient = new DynamoDBClient({ region: process.env.REGION });
+    const ddbClient = new DynamoDBClient({ region: SES_REGION });
     const marshallOptions = {
         convertEmptyValues: true, removeUndefinedValues: true, convertClassInstanceToMap: true,
     };
