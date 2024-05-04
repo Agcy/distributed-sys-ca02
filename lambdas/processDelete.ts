@@ -26,33 +26,23 @@ export const handler: SNSHandler = async (event: SNSEvent) => {
                 // Object key may have spaces or unicode non-ASCII characters.
                 const srcKey = decodeURIComponent(s3e.object.key.replace(/\+/g, " "));
                 // Process the image ......
-                // Write item to DynamoDB
-                let origimage = null;
-                const params: GetObjectCommandInput = {
-                    Bucket: srcBucket,
-                    Key: srcKey,
-                };
-                origimage = await s3.send(new GetObjectCommand(params));
+
                 const ddbParams = {
-                    TableName: "ImagesTable",
+                    TableName: TABLE_NAME,
                     Key: {
-                        'ImageName': {S: srcKey},
+                        imageName: srcKey,
                     }
                 };
-                await ddb.send(new DeleteItemCommand(ddbParams));
-                console.log(` Successfully Delete ${srcKey} from ${srcBucket} in table ${TABLE_NAME}`)
-            }
-        } else if (snsMessage.name) {
-            const ddbParams = {
-                TableName: "ImagesTable",
-                Key: {
-                    'ImageName': {S: snsMessage.name},
+                try {
+                    await ddb.send(new DeleteCommand(ddbParams));
+                    console.log(` Successfully Delete ${srcKey} from ${srcBucket} in table ${TABLE_NAME}`)
+                }catch (error){
+                    console.log(` Unable to Delete ${srcKey} from ${srcBucket} in table ${TABLE_NAME}`)
+                    throw new Error(`Unable to Delete item with key ${srcKey} in DynamoDB.`)
                 }
-            }
-            await ddb.send(new DeleteItemCommand(ddbParams));
-        }
-        ;
 
+            }
+        }
     }
 }
 

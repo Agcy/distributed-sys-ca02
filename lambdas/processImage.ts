@@ -28,7 +28,7 @@ export const handler: SQSHandler = async (event) => {
                 // Object key may have spaces or unicode non-ASCII characters.
                 const srcKey = decodeURIComponent(s3e.object.key.replace(/\+/g, " "));
                 // Check the img extension
-                if (!srcKey.toLowerCase().endsWith('.jpeg') && !srcKey.toLowerCase().endsWith('.png')) {
+                if (!srcKey.endsWith('.jpeg') && !srcKey.endsWith('.png')) {
                     console.error(`Unsupported file type for key: ${srcKey}`);
                     throw new Error(`Unsupported file type: Files must be JPEG or PNG in ${srcBucket}.`);
                 }
@@ -37,7 +37,7 @@ export const handler: SQSHandler = async (event) => {
                     const ddbParams = {
                         TableName: TABLE_NAME,
                         Item: {
-                            'ImageName': { S: srcKey },
+                            'imageName': { S: srcKey },
                         }
                     };
                     await ddb.send(new PutItemCommand(ddbParams));

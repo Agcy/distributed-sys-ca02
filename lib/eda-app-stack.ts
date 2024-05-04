@@ -11,6 +11,7 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 
 import {Construct} from "constructs";
+import {TABLE_NAME} from "../env";
 
 // import * as sqs from 'aws-cdk-lib/aws-sqs';
 
@@ -29,7 +30,7 @@ export class EDAAppStack extends cdk.Stack {
             billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
             partitionKey: {name: "imageName", type: dynamodb.AttributeType.STRING},
             removalPolicy: cdk.RemovalPolicy.DESTROY,
-            tableName: "Images",
+            tableName: TABLE_NAME,
         })
         // Output
 
@@ -39,7 +40,7 @@ export class EDAAppStack extends cdk.Stack {
 
         // Create the DLQ
         const imageProcessingDLQ = new sqs.Queue(this, "img-processing-DLQ", {
-            receiveMessageWaitTime: cdk.Duration.seconds(10),
+            retentionPeriod: cdk.Duration.minutes(30),
         });
 
         // Integration infrastructure
@@ -58,10 +59,6 @@ export class EDAAppStack extends cdk.Stack {
 
         const rejectionMailerQ = new sqs.Queue(this, "rejection-mailer-queue", {
             receiveMessageWaitTime: cdk.Duration.seconds(10),
-            deadLetterQueue: {
-                queue: imageProcessingDLQ,
-                maxReceiveCount: 5
-            }
         });
 
         // Topic
@@ -139,6 +136,25 @@ export class EDAAppStack extends cdk.Stack {
             s3.EventType.OBJECT_CREATED,
             new s3n.SnsDestination(newImageTopic)  // Changed
         );
+
+        imagesBucket.addEventNotification(
+            s3.EventType.OBJECT_REMOVED,
+            new s3n.SnsDestination(updateDescriptionTopic)
+        )
+
+        updateDescriptionTopic.addSubscription(
+            new subs.LambdaSubscription(processUpdateFn, {
+                filterPolicy: {
+                    comment_type: sns.SubscriptionFilter.stringFilter({
+                        allowlist: ['Caption']
+                    }),
+                },
+            })
+        )
+
+        updateDescriptionTopic.addSubscription(
+            new subs.LambdaSubscription(processDeleteFn)
+        )
 
         newImageTopic.addSubscription(
             new subs.SqsSubscription(imageProcessQueue)
