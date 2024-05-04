@@ -24,10 +24,12 @@ const client = new SESClient({ region: SES_REGION});
 export const handler: SQSHandler = async (event: any) => {
     console.log("Event ", JSON.stringify(event));
     for (const record of event.Records) {
-        const recordBody = JSON.parse(record.body);
-        const snsMessage = JSON.parse(recordBody.Message);
+        console.log('err 1')
+        // const recordBody = JSON.parse(record.body);
+        const snsMessage = JSON.parse(record.Sns.Message);
 
         if (snsMessage.Records) {
+            console.log('err2')
             console.log("Record body ", JSON.stringify(snsMessage));
             for (const messageRecord of snsMessage.Records) {
                 const s3e = messageRecord.s3;

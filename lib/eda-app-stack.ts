@@ -12,6 +12,8 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 
 import {Construct} from "constructs";
 import {TABLE_NAME} from "../env";
+import {DynamoEventSource} from "aws-cdk-lib/aws-lambda-event-sources";
+import {StartingPosition} from "aws-cdk-lib/aws-lambda";
 
 // import * as sqs from 'aws-cdk-lib/aws-sqs';
 
@@ -27,6 +29,7 @@ export class EDAAppStack extends cdk.Stack {
 
         // create table
         const imagesTable = new dynamodb.Table(this, "ImagesTable", {
+            stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
             billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
             partitionKey: {name: "imageName", type: dynamodb.AttributeType.STRING},
             removalPolicy: cdk.RemovalPolicy.DESTROY,
@@ -61,14 +64,14 @@ export class EDAAppStack extends cdk.Stack {
             receiveMessageWaitTime: cdk.Duration.seconds(10),
         });
 
-        // Topic
-        const newImageTopic = new sns.Topic(this, "new-image-topic", {
-            displayName: "New Image topic",
-        });
-
-        const updateDescriptionTopic = new sns.Topic(this, "update-description-topic", {
-            displayName: "Update Description Topic"
-        });
+        // // Topic
+        // const newImageTopic = new sns.Topic(this, "new-image-topic", {
+        //     displayName: "New Image topic",
+        // });
+        //
+        // const updateDescriptionTopic = new sns.Topic(this, "update-description-topic", {
+        //     displayName: "Update Description Topic"
+        // });
 
         const unifiedNotificationTopic = new sns.Topic(this, "UnifiedNotificationTopic", {
             displayName: "Unified Event Notifications Topic"
@@ -135,6 +138,13 @@ export class EDAAppStack extends cdk.Stack {
             memorySize: 1024,
         });
 
+        const deleteMailerFn = new lambdanode.NodejsFunction(this, "delete-mailer-function", {
+            runtime: lambda.Runtime.NODEJS_16_X,
+            memorySize: 1024,
+            timeout: cdk.Duration.seconds(3),
+            entry: `${__dirname}/../lambdas/deleteMailer.ts`,
+        });
+
         // S3 --> SQS
         imagesBucket.addEventNotification(
             s3.EventType.OBJECT_CREATED,
@@ -158,7 +168,19 @@ export class EDAAppStack extends cdk.Stack {
         )
 
         unifiedNotificationTopic.addSubscription(
-            new subs.LambdaSubscription(processDeleteFn, {})
+            new subs.LambdaSubscription(processDeleteFn, {
+                filterPolicyWithMessageBody: {
+                    Records: sns.FilterOrPolicy.policy({
+                        eventName: sns.FilterOrPolicy.filter(
+                            sns.SubscriptionFilter.stringFilter({
+                                allowlist: [
+                                    "ObjectRemoved:Delete",
+                                ],
+                            }),
+                        ),
+                    }),
+                }
+            })
         )
 
         unifiedNotificationTopic.addSubscription(
@@ -174,11 +196,11 @@ export class EDAAppStack extends cdk.Stack {
         );
 
         unifiedNotificationTopic.addSubscription(
-            new subs.SqsSubscription(mailerQ, {
+            new subs.LambdaSubscription(mailerFn, {
                 filterPolicyWithMessageBody: {
                     Records: sns.FilterOrPolicy.policy({
                         eventName: sns.FilterOrPolicy.filter(sns.SubscriptionFilter.stringFilter({
-                            matchPrefixes: ['ObjectCreated:Put']
+                            allowlist: ['ObjectCreated:Put']
                         }))
                     })
                 }
@@ -199,15 +221,26 @@ export class EDAAppStack extends cdk.Stack {
         const rejectedImageMailEventSource = new events.SqsEventSource(imageProcessingDLQ, {
             batchSize: 5,
             maxBatchingWindow: cdk.Duration.seconds(10),
+        });
+
+        // const deleteImageMailEventSource = new events.SqsEventSource(imageProcessingDLQ, {
+        //     batchSize: 5,
+        //     maxBatchingWindow: cdk.Duration.seconds(10),
+        // });
+
+        const deleteImageMailEventSource = new events.DynamoEventSource(imagesTable, {
+            startingPosition: StartingPosition.TRIM_HORIZON,
+            batchSize: 5,
+            bisectBatchOnError: true,
+            retryAttempts: 2
         })
 
         processImageFn.addEventSource(newImageEventSource);
-        mailerFn.addEventSource(newImageMailEventSource);
+        // mailerFn.addEventSource(newImageMailEventSource);
         rejectionMailerFn.addEventSource(rejectedImageMailEventSource);
+        deleteMailerFn.addEventSource(deleteImageMailEventSource);
 
         // Permissions
-
-        imagesBucket.grantRead(processImageFn);
 
         mailerFn.addToRolePolicy(
             new iam.PolicyStatement({
@@ -233,6 +266,19 @@ export class EDAAppStack extends cdk.Stack {
             })
         );
 
+        deleteMailerFn.addToRolePolicy(
+            new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: [
+                    "ses:SendEmail",
+                    "ses:SendRawEmail",
+                    "ses:SendTemplatedEmail",
+                ],
+                resources: ["*"],
+            })
+        );
+
+        imagesBucket.grantRead(processImageFn);
         imagesTable.grantReadWriteData(processImageFn)
         imagesTable.grantReadWriteData(processDeleteFn)
         imagesTable.grantReadWriteData(processUpdateFn)
