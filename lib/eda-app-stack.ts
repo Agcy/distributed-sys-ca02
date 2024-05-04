@@ -32,11 +32,11 @@ export class EDAAppStack extends cdk.Stack {
             removalPolicy: cdk.RemovalPolicy.DESTROY,
             tableName: TABLE_NAME,
         })
-        // Output
-
-        new cdk.CfnOutput(this, "bucketName", {
-            value: imagesBucket.bucketName,
-        });
+        // // Output
+        //
+        // new cdk.CfnOutput(this, "bucketName", {
+        //     value: imagesBucket.bucketName,
+        // });
 
         // Create the DLQ
         const imageProcessingDLQ = new sqs.Queue(this, "img-processing-DLQ", {
@@ -68,6 +68,10 @@ export class EDAAppStack extends cdk.Stack {
 
         const updateDescriptionTopic = new sns.Topic(this, "update-description-topic", {
             displayName: "Update Description Topic"
+        });
+
+        const unifiedNotificationTopic = new sns.Topic(this, "UnifiedNotificationTopic", {
+            displayName: "Unified Event Notifications Topic"
         });
 
 
@@ -107,15 +111,15 @@ export class EDAAppStack extends cdk.Stack {
             this,
             "UpdateTableFunction",
             {
-            runtime: lambda.Runtime.NODEJS_16_X,
-            entry: `${__dirname}/../lambdas/processUpdate.ts`,
-            handler: 'handler',
-            timeout: cdk.Duration.seconds(15),
-            environment: {
-                TABLE_NAME: imagesTable.tableName,
-                REGION: 'eu-west-1'
-            }
-        });
+                runtime: lambda.Runtime.NODEJS_16_X,
+                entry: `${__dirname}/../lambdas/processUpdate.ts`,
+                handler: 'handler',
+                timeout: cdk.Duration.seconds(15),
+                environment: {
+                    TABLE_NAME: imagesTable.tableName,
+                    REGION: 'eu-west-1'
+                }
+            });
 
         const mailerFn = new lambdanode.NodejsFunction(this, "mailer-function", {
             runtime: lambda.Runtime.NODEJS_16_X,
@@ -134,15 +138,16 @@ export class EDAAppStack extends cdk.Stack {
         // S3 --> SQS
         imagesBucket.addEventNotification(
             s3.EventType.OBJECT_CREATED,
-            new s3n.SnsDestination(newImageTopic)  // Changed
+            new s3n.SnsDestination(unifiedNotificationTopic)  // Changed
         );
 
         imagesBucket.addEventNotification(
             s3.EventType.OBJECT_REMOVED,
-            new s3n.SnsDestination(updateDescriptionTopic)
+            new s3n.SnsDestination(unifiedNotificationTopic)
         )
 
-        updateDescriptionTopic.addSubscription(
+        // Subscription and filtering
+        unifiedNotificationTopic.addSubscription(
             new subs.LambdaSubscription(processUpdateFn, {
                 filterPolicy: {
                     comment_type: sns.SubscriptionFilter.stringFilter({
@@ -152,15 +157,33 @@ export class EDAAppStack extends cdk.Stack {
             })
         )
 
-        updateDescriptionTopic.addSubscription(
-            new subs.LambdaSubscription(processDeleteFn)
+        unifiedNotificationTopic.addSubscription(
+            new subs.LambdaSubscription(processDeleteFn, {})
         )
 
-        newImageTopic.addSubscription(
-            new subs.SqsSubscription(imageProcessQueue)
+        unifiedNotificationTopic.addSubscription(
+            new subs.SqsSubscription(imageProcessQueue, {
+                filterPolicyWithMessageBody: {
+                    Records: sns.FilterOrPolicy.policy({
+                        eventName: sns.FilterOrPolicy.filter(sns.SubscriptionFilter.stringFilter({
+                            matchPrefixes: ['ObjectCreated:Put']
+                        }))
+                    })
+                }
+            })
         );
 
-        newImageTopic.addSubscription(new subs.SqsSubscription(mailerQ));
+        unifiedNotificationTopic.addSubscription(
+            new subs.SqsSubscription(mailerQ, {
+                filterPolicyWithMessageBody: {
+                    Records: sns.FilterOrPolicy.policy({
+                        eventName: sns.FilterOrPolicy.filter(sns.SubscriptionFilter.stringFilter({
+                            matchPrefixes: ['ObjectCreated:Put']
+                        }))
+                    })
+                }
+            })
+        );
 
         // SQS --> Lambda
         const newImageEventSource = new events.SqsEventSource(imageProcessQueue, {
@@ -220,9 +243,9 @@ export class EDAAppStack extends cdk.Stack {
             value: imagesBucket.bucketName,
         });
 
-        new cdk.CfnOutput(this, "updateDescriptionTopicArn", {
-            value: updateDescriptionTopic.topicArn,
-            exportName: "updateDescriptionTopicArn"
+        new cdk.CfnOutput(this, "unifiedNotificationTopicArn", {
+            value: unifiedNotificationTopic.topicArn,
+            exportName: "UnifiedNotificationTopicArn"
         });
     }
 }
